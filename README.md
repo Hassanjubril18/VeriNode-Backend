@@ -1,23 +1,34 @@
-# VeriNode — Backend
+# VeriNode-Backend
 
-Node.js API server for VeriNode: a decentralized savings circles (ROSCA) protocol on Stellar Soroban.
+Node.js Express API server for the VeriNode Decentralized Savings Circle (ROSCA) protocol, managing circle lifecycles, collateral tracking, and leniency/governance workflows.
 
-## Features
+## 🚀 Key Features
+* **Circle Lifecycle Management:** REST API endpoints to create, join, deposit, and process payout rounds for savings circles.
+* **Collateral & Slashing Integrations:** Monitors collateral vault deposits, slashing events, and release state transitions.
+* **Governance & Leniency Voting:** Interfaces for proposing and voting on leniency grace period requests and quadratic voting proposals.
 
-- **Circle Management**: REST API for creating and managing ROSCA savings groups
-- **Collateral Operations**: Collateral deposit, withdrawal, and status tracking
-- **Governance**: Quadratic voting proposal creation and voting
-- **Emergency Actions**: Emergency withdrawal and leniency request processing
-- **Blockchain Integration**: Stellar Soroban smart contract interaction
+## 🛠️ Tech Stack
+* **Language/Framework:** Node.js / Express
+* **Key Dependencies:** `express`, `cors`, `dotenv`
 
-## Tech Stack
+## 📦 Getting Started
 
-- [Express](https://expressjs.com/) — Web framework
-- [Stellar SDK](https://github.com/stellar/js-stellar-sdk) — Blockchain integration
+### Prerequisites
+Ensure you have the required toolchains installed:
+* Node.js (v18 or higher recommended)
+* npm (Node Package Manager)
 
-## Getting Started
-
+### Installation & Local Setup
 ```bash
+# Clone the repository (if running manually)
+git clone https://github.com/VeriNode-Labs/VeriNode-Backend
+
+# Install dependencies or build
 npm install
-npm start
+
+# Start the application
+node index.js
 ```
+
+## 🤝 Contributing
+Contributions are highly welcome. Please ensure your commits are cryptographically signed using GPG or SSH keys. For major structural changes, please open an issue first to discuss your proposal.
