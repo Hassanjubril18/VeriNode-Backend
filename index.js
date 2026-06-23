@@ -36,6 +36,28 @@ const express = require('express');
 const https = require('https');
 const app = express();
 
+function getDeadLetterQueue() {
+  return app.locals.deadLetterQueue || global.__verinode_dlq || null;
+}
+
+function getDeadLetterRetryHandler() {
+  return app.locals.deadLetterRetryHandler || global.__verinode_dlq_retry_handler || null;
+}
+
+function parseListQuery(query) {
+  const params = {};
+  if (typeof query.messageType === 'string' && query.messageType.trim()) {
+    params.messageType = query.messageType.trim();
+  }
+  if (typeof query.limit === 'string') {
+    params.limit = Number.parseInt(query.limit, 10);
+  }
+  if (typeof query.offset === 'string') {
+    params.offset = Number.parseInt(query.offset, 10);
+  }
+  return params;
+}
+
 function loadMtlsModule() {
   const tryPaths = [
     () => require('./dist/security/mtls'),
@@ -104,17 +126,21 @@ app.get('/health/pools', (req, res) => {
 });
 
 // /metrics — Prometheus text-format scrape endpoint.
-app.get('/metrics', (req, res) => {
+app.get('/metrics', async (req, res) => {
   const chunks = [];
   const pools = global.__verinode_pools;
   if (pools && typeof pools.prometheusMetrics === 'function') {
     chunks.push(pools.prometheusMetrics());
   }
+  const dlq = getDeadLetterQueue();
+  if (dlq && typeof dlq.prometheusMetrics === 'function') {
+    chunks.push(await dlq.prometheusMetrics());
+  }
   if (mtlsManager && typeof mtlsManager.prometheusMetrics === 'function') {
     chunks.push(mtlsManager.prometheusMetrics());
   }
   if (chunks.length === 0) {
-    return res.status(503).type('text/plain').send('# metrics not initialised\n');
+    return res.status(503).type('text/plain').send('# metrics sources not initialised\n');
   }
   res.type('text/plain; version=0.0.4; charset=utf-8').send(chunks.join('\n'));
 });
