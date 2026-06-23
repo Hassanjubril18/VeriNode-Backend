@@ -165,67 +165,35 @@ app.post('/internal/archival/renew/:contractId', express.json(), async (req, res
   }
 });
 
-// DLQ management API — list, retry, purge, and TTL cleanup for failed async messages.
-app.get('/internal/dlq', async (req, res) => {
-  const dlq = getDeadLetterQueue();
-  if (!dlq) {
-    return res.status(503).json({ error: 'dead letter queue not initialised' });
-  }
+async function startServer() {
+  const httpServer = app.listen(port, () => console.log(`Server running on port ${port}`));
   try {
-    res.json({ entries: await dlq.list(parseListQuery(req.query)) });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'dlq list failed' });
-  }
-});
-
-app.post('/internal/dlq/:id/retry', express.json(), async (req, res) => {
-  const dlq = getDeadLetterQueue();
-  const handler = getDeadLetterRetryHandler();
-  if (!dlq) {
-    return res.status(503).json({ error: 'dead letter queue not initialised' });
-  }
-  if (typeof handler !== 'function') {
-    return res.status(503).json({ error: 'dead letter retry handler not initialised' });
-  }
-  try {
-    const result = await dlq.retry(req.params.id, handler);
-    res.json({ retried: true, result });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'dlq retry failed';
-    if (message.includes('not found')) {
-      return res.status(404).json({ error: message });
+    let tlsBootstrap = null;
+    const tryPaths = [
+      () => require('./dist/tls/acme_rotation'),
+      () => {
+        require('ts-node').register({ transpileOnly: true, project: './tsconfig.json' });
+        return require('./src/tls/acme_rotation');
+      },
+    ];
+    for (const load of tryPaths) {
+      try {
+        tlsBootstrap = load();
+        break;
+      } catch (err) {
+        // try next path
+      }
     }
-    res.status(500).json({ retried: false, error: message });
-  }
-});
-
-app.delete('/internal/dlq/expired', async (req, res) => {
-  const dlq = getDeadLetterQueue();
-  if (!dlq) {
-    return res.status(503).json({ error: 'dead letter queue not initialised' });
-  }
-  try {
-    res.json({ purged: await dlq.purgeExpired() });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'dlq purge failed' });
-  }
-});
-
-app.delete('/internal/dlq/:id', async (req, res) => {
-  const dlq = getDeadLetterQueue();
-  if (!dlq) {
-    return res.status(503).json({ error: 'dead letter queue not initialised' });
-  }
-  try {
-    const purged = await dlq.purge(req.params.id);
-    if (!purged) {
-      return res.status(404).json({ error: 'dead letter entry not found' });
+    if (tlsBootstrap && typeof tlsBootstrap.bootstrapTlsFromEnv === 'function') {
+      await tlsBootstrap.bootstrapTlsFromEnv(app, { httpPort: port });
     }
-    res.json({ purged: true });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'dlq purge failed' });
+    httpServer.close();
+    console.error('[index] TLS ACME bootstrap failed', err);
+    process.exitCode = 1;
   }
-});
+}
+
 
 if (require.main === module) {
   if (mtlsManager && mtlsManager.config.enabled) {
@@ -234,7 +202,7 @@ if (require.main === module) {
     server.on('tlsClientError', () => mtlsManager.recordHandshakeFailure());
     server.listen(port, () => console.log(`mTLS server running on port ${port}`));
   } else {
-    app.listen(port, () => console.log(`Server running on port ${port}`));
+    void startServer();
   }
 }
 
