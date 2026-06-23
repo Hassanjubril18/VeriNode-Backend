@@ -30,5 +30,9 @@ npm install
 node index.js
 ```
 
+## 🐳 Docker CI Cache
+
+Docker image builds use a digest-pinned Node.js base image, dependency-layer pinning, and GitHub Actions BuildKit cache warmups. See [docs/docker-ci-cache.md](docs/docker-ci-cache.md) for the layer strategy and benchmark commands.
+
 ## 🤝 Contributing
 Contributions are highly welcome. Please ensure your commits are cryptographically signed using GPG or SSH keys. For major structural changes, please open an issue first to discuss your proposal.

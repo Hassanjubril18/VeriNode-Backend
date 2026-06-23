@@ -33,7 +33,74 @@
 })();
 
 const express = require('express');
+const https = require('https');
 const app = express();
+
+function getDeadLetterQueue() {
+  return app.locals.deadLetterQueue || global.__verinode_dlq || null;
+}
+
+function getDeadLetterRetryHandler() {
+  return app.locals.deadLetterRetryHandler || global.__verinode_dlq_retry_handler || null;
+}
+
+function parseListQuery(query) {
+  const params = {};
+  if (typeof query.messageType === 'string' && query.messageType.trim()) {
+    params.messageType = query.messageType.trim();
+  }
+  if (typeof query.limit === 'string') {
+    params.limit = Number.parseInt(query.limit, 10);
+  }
+  if (typeof query.offset === 'string') {
+    params.offset = Number.parseInt(query.offset, 10);
+  }
+  return params;
+}
+
+function loadMtlsModule() {
+  const tryPaths = [
+    () => require('./dist/security/mtls'),
+    () => {
+      require('ts-node').register({ transpileOnly: true, project: './tsconfig.json' });
+      return require('./src/security/mtls');
+    },
+  ];
+  for (const load of tryPaths) {
+    try {
+      return load();
+    } catch (err) {
+      // try next path
+    }
+  }
+  return null;
+}
+
+const mtls = loadMtlsModule();
+if ((process.env.VERINODE_MTLS_ENABLED === 'true' || process.env.VERINODE_MTLS_ENABLED === '1') && !mtls) {
+  throw new Error('VERINODE_MTLS_ENABLED is set but the mTLS module could not be loaded');
+}
+const mtlsManager = mtls && typeof mtls.createMtlsManagerFromEnv === 'function'
+  ? mtls.createMtlsManagerFromEnv()
+  : null;
+global.__verinode_mtls = mtlsManager;
+
+app.use((req, res, next) => {
+  if (!mtlsManager || !mtlsManager.current) return next();
+  if (!req.client.authorized) {
+    mtlsManager.recordHandshakeFailure();
+    return res.status(401).json({ error: 'mTLS client certificate required' });
+  }
+  const peerCert = req.socket.getPeerCertificate();
+  if (!mtls.validatePeerCertificate(peerCert, mtlsManager.config ?? {
+    trustDomain: process.env.SPIFFE_TRUST_DOMAIN || 'cluster.local',
+    allowedSpiffeIds: (process.env.SPIFFE_ALLOWED_IDS || '').split(',').map((v) => v.trim()).filter(Boolean),
+  })) {
+    mtlsManager.recordInvalidPeerIdentity();
+    return res.status(403).json({ error: 'mTLS peer SPIFFE identity is not allowed' });
+  }
+  return next();
+});
 
 app.get('/', (req, res) => res.send('VeriNode API is running'));
 
@@ -59,12 +126,23 @@ app.get('/health/pools', (req, res) => {
 });
 
 // /metrics — Prometheus text-format scrape endpoint.
-app.get('/metrics', (req, res) => {
+app.get('/metrics', async (req, res) => {
+  const chunks = [];
   const pools = global.__verinode_pools;
-  if (!pools || typeof pools.prometheusMetrics !== 'function') {
-    return res.status(503).type('text/plain').send('# pool router not initialised\n');
+  if (pools && typeof pools.prometheusMetrics === 'function') {
+    chunks.push(pools.prometheusMetrics());
   }
-  res.type('text/plain; version=0.0.4; charset=utf-8').send(pools.prometheusMetrics());
+  const dlq = getDeadLetterQueue();
+  if (dlq && typeof dlq.prometheusMetrics === 'function') {
+    chunks.push(await dlq.prometheusMetrics());
+  }
+  if (mtlsManager && typeof mtlsManager.prometheusMetrics === 'function') {
+    chunks.push(mtlsManager.prometheusMetrics());
+  }
+  if (chunks.length === 0) {
+    return res.status(503).type('text/plain').send('# metrics sources not initialised\n');
+  }
+  res.type('text/plain; version=0.0.4; charset=utf-8').send(chunks.join('\n'));
 });
 
 const port = process.env.PORT || 3000;
@@ -87,8 +165,45 @@ app.post('/internal/archival/renew/:contractId', express.json(), async (req, res
   }
 });
 
+async function startServer() {
+  const httpServer = app.listen(port, () => console.log(`Server running on port ${port}`));
+  try {
+    let tlsBootstrap = null;
+    const tryPaths = [
+      () => require('./dist/tls/acme_rotation'),
+      () => {
+        require('ts-node').register({ transpileOnly: true, project: './tsconfig.json' });
+        return require('./src/tls/acme_rotation');
+      },
+    ];
+    for (const load of tryPaths) {
+      try {
+        tlsBootstrap = load();
+        break;
+      } catch (err) {
+        // try next path
+      }
+    }
+    if (tlsBootstrap && typeof tlsBootstrap.bootstrapTlsFromEnv === 'function') {
+      await tlsBootstrap.bootstrapTlsFromEnv(app, { httpPort: port });
+    }
+  } catch (err) {
+    httpServer.close();
+    console.error('[index] TLS ACME bootstrap failed', err);
+    process.exitCode = 1;
+  }
+}
+
+
 if (require.main === module) {
-  app.listen(port, () => console.log(`Server running on port ${port}`));
+  if (mtlsManager && mtlsManager.config.enabled) {
+    mtlsManager.startRotationWatch();
+    const server = https.createServer(mtlsManager.serverOptions(), app);
+    server.on('tlsClientError', () => mtlsManager.recordHandshakeFailure());
+    server.listen(port, () => console.log(`mTLS server running on port ${port}`));
+  } else {
+    void startServer();
+  }
 }
 
 module.exports = app;
