@@ -1,8 +1,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigValidator, mergeConfigs } from './validator';
-import { deepMerge } from './utils';
+import { deepMerge, setIn } from './utils';
 import { mainSchema } from './schema';
+
+/**
+ * Helper to get the end of a range for prefix-based queries in etcd
+ */
+function getRangeEnd(prefix: string): string {
+  if (prefix.length === 0) return '\xff';
+  const lastChar = prefix.charCodeAt(prefix.length - 1);
+  return prefix.slice(0, -1) + String.fromCharCode(lastChar + 1);
+}
 
 /**
  * Configuration sources with priority (lower index = higher priority)
@@ -100,7 +109,7 @@ export class ConfigLoader {
    */
   addRemoteSource(type: 'etcd' | 'consul', options?: any): this {
     return this.addSource({
-      priority: 30,
+      priority: 5, // High priority, overrides Env and File
       name: `remote:${type}`,
       load: () => this.loadRemote(type, options),
     });
@@ -108,13 +117,164 @@ export class ConfigLoader {
 
   /**
    * Load configuration from remote source
-   * This is a placeholder - implement actual remote source integration here
    */
   private async loadRemote(type: 'etcd' | 'consul', options?: any): Promise<Record<string, any>> {
-    // Placeholder implementation
-    // In production, this would connect to etcd or consul and fetch config
-    console.log(`[Config] Remote source ${type} not implemented - using defaults`);
+    if (!options) return {};
+    if (type === 'etcd') {
+      return this.loadRemoteEtcd(options);
+    } else if (type === 'consul') {
+      return this.loadRemoteConsul(options);
+    }
     return {};
+  }
+
+  private async loadRemoteEtcd(options: any): Promise<Record<string, any>> {
+    const endpoints = options.endpoints || ['http://localhost:2379'];
+    const keyPrefix = options.keyPrefix || 'verinode/config';
+    
+    const normalizedPrefix = keyPrefix.endsWith('/') ? keyPrefix : `${keyPrefix}/`;
+    const rangeEnd = getRangeEnd(normalizedPrefix);
+    
+    const body = {
+      key: Buffer.from(normalizedPrefix).toString('base64'),
+      range_end: Buffer.from(rangeEnd).toString('base64')
+    };
+
+    let lastError: Error | null = null;
+    for (const endpoint of endpoints) {
+      try {
+        const url = `${endpoint.replace(/\/$/, '')}/v3/kv/range`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(5000)
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = (await response.json()) as any;
+        const result: Record<string, any> = {};
+        
+        if (data.kvs && Array.isArray(data.kvs)) {
+          for (const kv of data.kvs) {
+            const fullKey = Buffer.from(kv.key, 'base64').toString('utf8');
+            const valueStr = kv.value ? Buffer.from(kv.value, 'base64').toString('utf8') : '';
+            
+            let relativeKey = fullKey;
+            if (fullKey.startsWith(normalizedPrefix)) {
+              relativeKey = fullKey.substring(normalizedPrefix.length);
+            }
+            if (relativeKey.startsWith('/')) {
+              relativeKey = relativeKey.substring(1);
+            }
+            if (!relativeKey) {
+              try {
+                const parsed = JSON.parse(valueStr);
+                if (parsed && typeof parsed === 'object') {
+                  Object.assign(result, parsed);
+                }
+              } catch {
+                // Ignore
+              }
+              continue;
+            }
+            
+            const configPath = relativeKey.replace(/\//g, '.');
+            let parsedVal: any = valueStr;
+            try {
+              parsedVal = JSON.parse(valueStr);
+            } catch {
+              // Keep as raw string
+            }
+            setIn(result, configPath, parsedVal);
+          }
+        }
+        return result;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Config] Failed to fetch from etcd endpoint ${endpoint}: ${err.message}`);
+      }
+    }
+    
+    throw lastError || new Error('All etcd endpoints failed');
+  }
+
+  private async loadRemoteConsul(options: any): Promise<Record<string, any>> {
+    const address = options.address || 'localhost:8500';
+    const keyPrefix = options.keyPrefix || 'verinode/config';
+    const token = options.token;
+    
+    const normalizedPrefix = keyPrefix.endsWith('/') ? keyPrefix : `${keyPrefix}/`;
+    const baseUrl = address.startsWith('http') ? address : `http://${address}`;
+    const url = `${baseUrl.replace(/\/$/, '')}/v1/kv/${normalizedPrefix}?recurse=true`;
+    
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['X-Consul-Token'] = token;
+    }
+    
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(5000)
+      });
+      
+      if (response.status === 404) {
+        return {};
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+      }
+      
+      const kvs = (await response.json()) as any[];
+      const result: Record<string, any> = {};
+      
+      for (const kv of kvs) {
+        const fullKey = kv.Key;
+        const valueStr = kv.Value ? Buffer.from(kv.Value, 'base64').toString('utf8') : '';
+        
+        let relativeKey = fullKey;
+        if (fullKey.startsWith(normalizedPrefix)) {
+          relativeKey = fullKey.substring(normalizedPrefix.length);
+        }
+        if (relativeKey.startsWith('/')) {
+          relativeKey = relativeKey.substring(1);
+        }
+        
+        if (!relativeKey) {
+          try {
+            const parsed = JSON.parse(valueStr);
+            if (parsed && typeof parsed === 'object') {
+              Object.assign(result, parsed);
+            }
+          } catch {
+            // Ignore
+          }
+          continue;
+        }
+        
+        const configPath = relativeKey.replace(/\//g, '.');
+        let parsedVal: any = valueStr;
+        try {
+          parsedVal = JSON.parse(valueStr);
+        } catch {
+          // Keep as raw string
+        }
+        setIn(result, configPath, parsedVal);
+      }
+      
+      return result;
+    } catch (err: any) {
+      console.warn(`[Config] Failed to fetch from Consul address ${address}: ${err.message}`);
+      throw err;
+    }
   }
 
   /**
