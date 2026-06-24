@@ -247,7 +247,16 @@ export class ConfigManager {
    */
   update(path: string | string[], value: any): void {
     const oldConfig = deepClone(this.config);
-    setIn(this.config, path, value);
+    const newConfig = deepClone(this.config);
+    setIn(newConfig, path, value);
+
+    const validationResult = this.validator.validate(newConfig);
+    if (!validationResult.valid) {
+      const errorMessages = validationResult.errors.map(e => `${e.path}: ${e.message}`).join('; ');
+      throw new Error(`Configuration validation failed: ${errorMessages}`);
+    }
+
+    this.config = validationResult.data;
     configEventBus.emitEvent('updated', this.config);
     
     // Notify change listeners
@@ -265,11 +274,30 @@ export class ConfigManager {
    */
   delete(path: string | string[]): boolean {
     const oldConfig = deepClone(this.config);
-    const result = deleteIn(this.config, path);
-    if (result) {
-      configEventBus.emitEvent('updated', this.config);
+    const newConfig = deepClone(this.config);
+    const result = deleteIn(newConfig, path);
+    if (!result) {
+      return false;
     }
-    return result;
+
+    const validationResult = this.validator.validate(newConfig);
+    if (!validationResult.valid) {
+      const errorMessages = validationResult.errors.map(e => `${e.path}: ${e.message}`).join('; ');
+      throw new Error(`Configuration validation failed: ${errorMessages}`);
+    }
+
+    this.config = validationResult.data;
+    configEventBus.emitEvent('updated', this.config);
+
+    // Notify change listeners
+    for (const [id, callback] of this.changeCallbacks) {
+      try {
+        callback(oldConfig, this.config);
+      } catch (err) {
+        console.error(`[Config] Error in change callback ${id}:`, (err as Error).message);
+      }
+    }
+    return true;
   }
 
   /**
