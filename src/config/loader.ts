@@ -1,8 +1,54 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ConfigValidator, mergeConfigs } from './validator';
-import { deepMerge, setIn } from './utils';
+import { ConfigValidator, mergeConfigs, normalizeEnvKey } from './validator';
+import { deepMerge, setIn, parseEnvValue } from './utils';
 import { mainSchema } from './schema';
+
+/**
+ * Helper to find the actual case-sensitive property path in schema by case-insensitive key path matching
+ */
+function findActualPath(schema: any, path: string): string[] | null {
+  const target = path.replace(/[\._]/g, '').toLowerCase();
+  
+  function search(currentSchema: any, currentPath: string[], targetStr: string): string[] | null {
+    const currentStr = currentPath.join('').toLowerCase();
+    if (currentStr === targetStr) {
+      return currentPath;
+    }
+    if (!currentSchema || typeof currentSchema !== 'object' || !currentSchema.properties) {
+      return null;
+    }
+    for (const key of Object.keys(currentSchema.properties)) {
+      const result = search(currentSchema.properties[key], [...currentPath, key], targetStr);
+      if (result) return result;
+    }
+    return null;
+  }
+
+  return search(schema, [], target);
+}
+
+/**
+ * Helper to find the type of a dot-separated key path in a JSON Schema
+ */
+function getSchemaTypeForPath(schema: any, path: string): 'string' | 'number' | 'boolean' | 'array' | undefined {
+  const keys = path.split('.');
+  let current = schema;
+  for (const key of keys) {
+    if (!current) return undefined;
+    if (current.properties && current.properties[key]) {
+      current = current.properties[key];
+    } else {
+      return undefined;
+    }
+  }
+  const type = current.type;
+  if (type === 'integer' || type === 'number') return 'number';
+  if (type === 'boolean') return 'boolean';
+  if (type === 'array') return 'array';
+  if (type === 'string') return 'string';
+  return undefined;
+}
 
 /**
  * Helper to get the end of a range for prefix-based queries in etcd
@@ -68,8 +114,29 @@ export class ConfigLoader {
 
     for (const [key, value] of Object.entries(process.env)) {
       if (key.startsWith(prefix + '_')) {
-        const configKey = key.substring(prefix.length + 1).toLowerCase();
-        setIn(result, configKey, value);
+        const configKey = normalizeEnvKey(key);
+        const schema = this.validator['schema'] || mainSchema;
+        
+        const actualPath = findActualPath(schema, configKey);
+        const targetPath = actualPath ? actualPath.join('.') : configKey;
+        const targetType = getSchemaTypeForPath(schema, targetPath);
+        
+        let parsedValue: any = value;
+        if (targetType) {
+          parsedValue = parseEnvValue(value, targetType);
+        } else {
+          if (value === 'true' || value === 'false') {
+            parsedValue = value === 'true';
+          } else if (value && !isNaN(Number(value)) && Number.isFinite(Number(value))) {
+            parsedValue = Number(value);
+          }
+        }
+        
+        if (actualPath) {
+          setIn(result, actualPath, parsedValue);
+        } else {
+          setIn(result, configKey, parsedValue);
+        }
       }
     }
 

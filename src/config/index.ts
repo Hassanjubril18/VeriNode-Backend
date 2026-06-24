@@ -8,6 +8,7 @@ export { deepClone, deepMerge, getIn, setIn, deleteIn, parseEnvValue, formatErro
 
 import { getConfigManager } from './manager';
 import { ConfigValidationError } from './validator';
+import { configEventBus } from './eventbus';
 
 /**
  * Default configuration file path
@@ -73,7 +74,21 @@ export function onChangePath(path: string, callback: (value: any) => void, id?: 
  */
 export async function reloadConfig(): Promise<void> {
   const manager = getConfigManager();
-  manager.triggerReload();
+  return new Promise<void>((resolve, reject) => {
+    const onComplete = () => {
+      configEventBus.removeListener('reload_complete', onComplete);
+      configEventBus.removeListener('error', onError);
+      resolve();
+    };
+    const onError = (payload: any) => {
+      configEventBus.removeListener('reload_complete', onComplete);
+      configEventBus.removeListener('error', onError);
+      reject(payload.error || new Error('Reload failed'));
+    };
+    configEventBus.on('reload_complete', onComplete);
+    configEventBus.on('error', onError);
+    manager.triggerReload();
+  });
 }
 
 /**

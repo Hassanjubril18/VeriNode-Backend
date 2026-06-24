@@ -235,10 +235,9 @@ export function normalizeEnvKey(key: string): string {
   if (!match) return key.toLowerCase();
   
   const parts = match[1].split('_');
-  if (parts.length < 2) return key.toLowerCase();
   
-  // Skip VERINODE_ prefix
-  const nestedKey = parts.slice(1).join('.');
+  // Join the parts matching the key suffix
+  const nestedKey = parts.join('.');
   return nestedKey.toLowerCase();
 }
 

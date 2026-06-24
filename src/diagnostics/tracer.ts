@@ -163,6 +163,12 @@ let queueProcessor: QueueDepthSpanProcessor | null = null;
 let initialized = false;
 const log = createLogger('tracer');
 
+let configuredServiceName: string | null = null;
+let configuredServiceVersion: string | null = null;
+let configuredSamplerRatio: number | null = null;
+let configuredEndpoint: string | null = null;
+let configuredDeploymentEnv: string | null = null;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -263,6 +269,18 @@ export function initTracing(options: InitOptions = {}): TraceConfig | null {
     return getTraceConfig();
   }
 
+  const endpoint = resolveEndpoint();
+  const samplerRatio = resolveSamplerRatio();
+  const serviceName = resolveServiceName();
+  const serviceVersion = resolveServiceVersion();
+  const deploymentEnv = resolveDeploymentEnv();
+
+  configuredEndpoint = endpoint;
+  configuredSamplerRatio = samplerRatio;
+  configuredServiceName = serviceName;
+  configuredServiceVersion = serviceVersion;
+  configuredDeploymentEnv = deploymentEnv;
+
   // Honor the standard OTEL_SDK_DISABLED env. Tests can flip this on
   // before importing the module to skip SDK startup entirely.
   if (process.env.OTEL_SDK_DISABLED === 'true' || options.disabled === true) {
@@ -276,10 +294,6 @@ export function initTracing(options: InitOptions = {}): TraceConfig | null {
   if (!options.silent) {
     diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
   }
-
-  const endpoint = resolveEndpoint();
-  const samplerRatio = resolveSamplerRatio();
-  const serviceName = resolveServiceName();
 
   try {
     const exporter = new OTLPTraceExporter({ url: endpoint });
@@ -334,6 +348,18 @@ export function initTracingFromConfig(otelConfig: OtelConfig, options: InitOptio
     return getTraceConfig();
   }
 
+  const endpoint = otelConfig.endpoint?.trim() || resolveEndpoint();
+  const samplerRatio = otelConfig.samplingRatio ?? resolveSamplerRatio();
+  const serviceName = otelConfig.serviceName?.trim() || resolveServiceName();
+  const serviceVersion = otelConfig.serviceVersion?.trim() || resolveServiceVersion();
+  const deploymentEnv = otelConfig.deploymentEnvironment || resolveDeploymentEnv();
+
+  configuredEndpoint = endpoint;
+  configuredSamplerRatio = samplerRatio;
+  configuredServiceName = serviceName;
+  configuredServiceVersion = serviceVersion;
+  configuredDeploymentEnv = deploymentEnv;
+
   if (process.env.OTEL_SDK_DISABLED === 'true' || options.disabled === true) {
     if (!options.silent) {
       console.log('[tracer] OTEL_SDK_DISABLED=true — skipping initializer');
@@ -345,11 +371,6 @@ export function initTracingFromConfig(otelConfig: OtelConfig, options: InitOptio
   if (!options.silent) {
     diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
   }
-
-  const endpoint = otelConfig.endpoint?.trim() || resolveEndpoint();
-  const samplerRatio = otelConfig.samplingRatio ?? resolveSamplerRatio();
-  const serviceName = otelConfig.serviceName?.trim() || resolveServiceName();
-  const serviceVersion = otelConfig.serviceVersion?.trim() || resolveServiceVersion();
 
   try {
     const exporter = new OTLPTraceExporter({ url: endpoint });
@@ -396,6 +417,12 @@ export function initTracingFromConfig(otelConfig: OtelConfig, options: InitOptio
  * Idempotent: safe to call when nothing is initialized.
  */
 export async function shutdownTracing(): Promise<void> {
+  configuredServiceName = null;
+  configuredServiceVersion = null;
+  configuredSamplerRatio = null;
+  configuredEndpoint = null;
+  configuredDeploymentEnv = null;
+
   if (!sdk) {
     initialized = false;
     queueProcessor = null;
@@ -422,14 +449,14 @@ export async function shutdownTracing(): Promise<void> {
  */
 export function getTraceConfig(): TraceConfig {
   return {
-    serviceName: resolveServiceName(),
-    serviceVersion: resolveServiceVersion(),
+    serviceName: configuredServiceName || resolveServiceName(),
+    serviceVersion: configuredServiceVersion || resolveServiceVersion(),
     hostName: os.hostname(),
-    deploymentEnvironment: resolveDeploymentEnv(),
-    exporterEndpoint: resolveEndpoint(),
+    deploymentEnvironment: configuredDeploymentEnv || resolveDeploymentEnv(),
+    exporterEndpoint: configuredEndpoint || resolveEndpoint(),
     exporterProtocol: 'OTLP/gRPC',
     samplerType: 'ParentBased(TraceIdRatioBased)',
-    samplerRatio: resolveSamplerRatio(),
+    samplerRatio: configuredSamplerRatio !== null ? configuredSamplerRatio : resolveSamplerRatio(),
     propagationFormat: 'W3C TraceContext',
     queueDepth: queueProcessor?.getQueueDepth() ?? 0,
     initialized,
