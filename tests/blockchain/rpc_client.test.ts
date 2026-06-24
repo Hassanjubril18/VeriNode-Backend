@@ -1,7 +1,13 @@
 import { RpcClient, RpcClientConfig, TransactionResult, LedgerEntryData, RpcError } from '../../src/blockchain/rpc_client';
 
+const __origFetch = globalThis.fetch;
+
 function makeFetchMock(handler: (url: string, opts: any) => Promise<any>): void {
   (globalThis as any).fetch = async (url: string, opts: any) => handler(url, opts);
+}
+
+function restoreFetch(): void {
+  (globalThis as any).fetch = __origFetch;
 }
 
 async function main(): Promise<void> {
@@ -151,6 +157,8 @@ async function main(): Promise<void> {
     assert('code' in result, 'returns RpcError on fetch error');
     assert((result as RpcError).code === -32000, 'fetch error code is -32000');
   }
+
+  restoreFetch();
 
   const total = passed + failed;
   console.log(`\n${total} tests: ${passed} passed, ${failed} failed\n`);

@@ -5,6 +5,10 @@ require('ts-node').register({
   transpileOnly: true,
 });
 
+// Ensure any module-level initTracing() uses a fast-fail endpoint
+// instead of the default otel-collector:4317 which hangs in CI.
+process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:14317';
+
 const originalExit = process.exit.bind(process);
 let globalExitCode = 0;
 

@@ -80,7 +80,7 @@ async function main() {
 
   const total = passed + failed;
   console.log(`\n${total} tests: ${passed} passed, ${failed} failed\n`);
-  if (failed > 0) process.exit(1);
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((err) => {
