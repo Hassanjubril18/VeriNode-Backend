@@ -2,6 +2,7 @@ import { X509Certificate, createHash } from 'node:crypto';
 import { readFileSync, watch, FSWatcher } from 'node:fs';
 import * as tls from 'node:tls';
 import { getConfigManager } from '../config/manager';
+import { createLogger } from '../diagnostics/logger';
 
 const DEFAULT_CERT_MAX_VALIDITY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MIN_SECONDS_UNTIL_EXPIRY = 60 * 60;

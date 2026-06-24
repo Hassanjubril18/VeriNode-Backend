@@ -1,5 +1,6 @@
 import { Pool, PoolConfig, QueryResult, QueryResultRow, PoolClient } from 'pg';
 import { getConfigManager } from './manager';
+import { createLogger } from '../diagnostics/logger';
 
 export interface DatabaseConfig {
   host: string;

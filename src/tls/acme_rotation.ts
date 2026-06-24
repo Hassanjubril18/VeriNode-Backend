@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as tls from 'tls';
 import type express from 'express';
 import { getConfigManager } from '../config/manager';
+import { createLogger, StructuredLogger } from '../diagnostics/logger';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RENEW_BEFORE_DAYS = 30;
