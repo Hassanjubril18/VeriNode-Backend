@@ -1,10 +1,12 @@
-import { RpcClient, TransactionResult } from './rpc_client';
+import { RpcClient, TransactionResult, PreflightReport } from './rpc_client';
 import { ContractDataPointer, MAX_BATCH_TTL_ENTRIES } from '../contracts/verification_contract';
+import { createLogger } from '../diagnostics/logger';
 
 export interface ExtendFootprintTTLParams {
   pointers: ContractDataPointer[];
   /** New minimum TTL, in ledgers, applied to every entry in the batch. */
   extendToLedgers: number;
+  preflight?: PreflightReport;
 }
 
 export interface BatchRenewalResult {
@@ -27,14 +29,27 @@ function sleep(ms: number): Promise<void> {
  * giving up so a transient RPC hiccup doesn't let a critical key archive.
  */
 export class TransactionBuilder {
+  private log = createLogger('transaction_builder');
+
   constructor(private rpcClient: RpcClient) {}
 
   /** Encodes the batch into the (placeholder) XDR transaction envelope. */
   private encodeExtendFootprintTx(params: ExtendFootprintTTLParams): string {
     const keys = params.pointers.map((p) => `${p.contractId}:${p.dataKey}`);
-    return Buffer.from(
-      JSON.stringify({ op: 'ExtendFootprintTTL', keys, extendTo: params.extendToLedgers }),
-    ).toString('base64');
+    const txData: any = {
+      op: 'ExtendFootprintTTL',
+      keys,
+      extendTo: params.extendToLedgers,
+    };
+
+    if (params.preflight) {
+      txData.instructions = params.preflight.estimatedGas;
+      this.log.debug('Applying preflight gas estimate to transaction', {
+        estimatedGas: params.preflight.estimatedGas,
+      });
+    }
+
+    return Buffer.from(JSON.stringify(txData)).toString('base64');
   }
 
   async submitBatchRenewal(params: ExtendFootprintTTLParams): Promise<BatchRenewalResult> {
