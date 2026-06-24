@@ -30,11 +30,26 @@ export class ConfigManager {
   private watchedFiles: WatchedFile[] = [];
   private changeCallbacks: Map<string, ConfigChangeCallback> = new Map();
   private reloadInProgress = false;
-  private reloadDebounceMs = 1000; // < 1s update propagation
+  private reloadDebounceMs = 100; // 100ms debounce for < 1s propagation
+  private sighupRegistered = false;
 
   constructor(schema: any = mainSchema) {
     this.validator = new ConfigValidator(schema);
     this.loader = new ConfigLoader(schema);
+  }
+
+  /**
+   * Register SIGHUP signal listener for reload
+   */
+  private registerSignalHandlers(): void {
+    try {
+      process.on('SIGHUP', () => {
+        console.log('[Config] SIGHUP received, triggering reload');
+        this.triggerReload();
+      });
+    } catch (err) {
+      console.warn('[Config] Failed to register SIGHUP handler:', (err as Error).message);
+    }
   }
 
   /**
@@ -43,6 +58,7 @@ export class ConfigManager {
   async initialize(options?: {
     configFile?: string;
     watchFiles?: string[];
+    loadRemote?: boolean;
   }): Promise<void> {
     // Add default sources
     this.loader.addDefaultsSource({
@@ -126,8 +142,30 @@ export class ConfigManager {
       }
     }
 
+    if (!this.sighupRegistered) {
+      this.registerSignalHandlers();
+      this.sighupRegistered = true;
+    }
+
     // Load initial configuration
     await this.reload();
+
+    // Dynamically load remote configurations if enabled
+    if (options?.loadRemote) {
+      let remoteAdded = false;
+      const remote = this.getIn('remote') || {};
+      if (remote.etcd?.enabled) {
+        this.loader.addRemoteSource('etcd', remote.etcd);
+        remoteAdded = true;
+      }
+      if (remote.consul?.enabled) {
+        this.loader.addRemoteSource('consul', remote.consul);
+        remoteAdded = true;
+      }
+      if (remoteAdded) {
+        await this.reload();
+      }
+    }
   }
 
   /**
@@ -144,8 +182,8 @@ export class ConfigManager {
       lastModified,
     });
 
-    // Start polling for changes
-    const interval = setInterval(() => this.checkFileChanges(), 5000);
+    // Start polling for changes - 250ms for near-instant hot-reload
+    const interval = setInterval(() => this.checkFileChanges(), 250);
     interval.unref?.();
     
     const watched = this.watchedFiles.find(f => f.path === absolutePath);
@@ -165,8 +203,8 @@ export class ConfigManager {
         const stat = fs.statSync(watched.path, { throwIfNoEntry: false });
         if (stat && stat.mtimeMs > watched.lastModified) {
           console.log(`[Config] File changed: ${watched.path}`);
-          this.triggerReload();
           watched.lastModified = stat.mtimeMs;
+          this.triggerReload();
         }
       } catch {
         // File might have been deleted

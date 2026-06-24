@@ -353,21 +353,4 @@ export class ConfigLoader {
   }
 }
 
-/**
- * Set nested property in object
- */
-function setIn(obj: any, path: string | string[], value: any): any {
-  const keys = Array.isArray(path) ? path : path.split('.');
-  let current: any = obj;
 
-  for (let i = 0; i < keys.length - 1; i++) {
-    const key = keys[i];
-    if (current[key] === undefined || current[key] === null) {
-      current[key] = {};
-    }
-    current = current[key];
-  }
-
-  current[keys[keys.length - 1]] = value;
-  return obj;
-}
