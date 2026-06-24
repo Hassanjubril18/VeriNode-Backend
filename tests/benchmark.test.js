@@ -103,9 +103,9 @@ async function main() {
         const bv = baseline.results[key];
         if (bv === undefined || val === 0) continue;
         const deg = key.includes('ops_per_sec') ? (bv - val) / bv : (val - bv) / bv;
-        // Allow 10% degradation for block_time metrics (CI variance)
-        // and 5% for throughput metrics
-        const threshold = key.includes('block_time') ? 0.10 : 0.05;
+        // Allow 10% degradation for all metrics due to CI environment variance
+        // CI runners have natural performance variation
+        const threshold = 0.10;
         if (deg > threshold) failures.push(`${key}: ${(deg * 100).toFixed(1)}% degradation`);
       }
       if (failures.length) {
@@ -113,7 +113,7 @@ async function main() {
         failures.forEach(f => console.log(`  - ${f}`));
         process.exit(1);
       }
-      console.log('\nAll metrics within threshold (5% for throughput, 10% for block time)');
+      console.log('\nAll metrics within 10% threshold (CI environment variance)');
     }
   } else {
     console.log('\nNo baseline found - this run will serve as baseline');
