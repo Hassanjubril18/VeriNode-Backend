@@ -202,7 +202,11 @@ async function main(): Promise<void> {
         return { hash: '', success: false };
       }
     })(ledger);
-    const failListener = new StateArchivalListener(db as any, failRpc, new TransactionBuilder(failRpc));
+    const failListener = new StateArchivalListener(
+      db as any,
+      failRpc,
+      new TransactionBuilder(failRpc, [0, 0, 0]),
+    );
     try {
       await failListener.renewNow(contractId);
       assert(false, 'renewNow should throw on failure');
@@ -243,7 +247,7 @@ async function main(): Promise<void> {
         return { hash: '', success: false };
       }
     })(ledger);
-    const failTxBuilder = new TransactionBuilder(failTxRpc);
+    const failTxBuilder = new TransactionBuilder(failTxRpc, [0, 0, 0]);
     // Force a tick that triggers renewal but fails
     ledger.advance(9000);
     const failTxListener = new StateArchivalListener(db as any, failTxRpc, failTxBuilder, { minRenewalGapMs: 0 });

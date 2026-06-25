@@ -16,7 +16,7 @@ export interface BatchRenewalResult {
 }
 
 /** Backoff schedule (ms) per spec: 1st retry 10s, 2nd 30s, 3rd (final) 90s. */
-const RETRY_DELAYS_MS = [10_000, 30_000, 90_000];
+const DEFAULT_RETRY_DELAYS_MS = [10_000, 30_000, 90_000];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,8 +30,11 @@ function sleep(ms: number): Promise<void> {
  */
 export class TransactionBuilder {
   private log = createLogger('transaction_builder');
+  private retryDelays: number[];
 
-  constructor(private rpcClient: RpcClient) {}
+  constructor(private rpcClient: RpcClient, retryDelays?: number[]) {
+    this.retryDelays = retryDelays ?? DEFAULT_RETRY_DELAYS_MS;
+  }
 
   /** Encodes the batch into the (placeholder) XDR transaction envelope. */
   private encodeExtendFootprintTx(params: ExtendFootprintTTLParams): string {
@@ -70,14 +73,14 @@ export class TransactionBuilder {
     let attempts = 0;
     let lastResult: TransactionResult = { hash: '', success: false };
 
-    for (let i = 0; i <= RETRY_DELAYS_MS.length; i++) {
+    for (let i = 0; i <= this.retryDelays.length; i++) {
       attempts++;
       lastResult = await this.rpcClient.sendTransaction(tx);
       if (lastResult.success) {
         return { txResult: lastResult, renewedPointers: params.pointers, attempts };
       }
-      if (i < RETRY_DELAYS_MS.length) {
-        await sleep(RETRY_DELAYS_MS[i]);
+      if (i < this.retryDelays.length) {
+        await sleep(this.retryDelays[i]);
       }
     }
 
